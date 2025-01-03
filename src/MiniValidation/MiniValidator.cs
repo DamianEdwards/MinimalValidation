@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
@@ -593,8 +594,13 @@ public static class MiniValidator
                                 $"The type {validators.GetType().Name} does not implement the required method 'Task<IEnumerable<ValidationResult>> ValidateAsync(object, ValidationContext)'.");
                         }
                         
-                        // NOTE would be ideal if we could use validateMethod.CreateDelegate(typeof(ValidateAsync)) here, but type casting doesn't work
-                        return (i, context) => (Task<IEnumerable<ValidationResult>>)validateMethod.Invoke(validator, new[] { i, context })!;
+                        var parameters = validateMethod.GetParameters();
+                        var targetArg = Expression.Parameter(typeof(object), "target");
+                        var contextArg = Expression.Parameter(typeof(ValidationContext), "context");
+                        var callExp = Expression.Call(Expression.Constant(validator), validateMethod, Expression.Convert(targetArg, parameters.First().ParameterType), contextArg);
+                        var handler = Expression.Lambda<ValidateAsync>(callExp, targetArg, contextArg).Compile();
+                        
+                        return handler;
                     });
 
                     var validateTask = validateDelegate(target, validationContext);
