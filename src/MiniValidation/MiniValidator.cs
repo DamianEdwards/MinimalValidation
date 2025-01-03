@@ -46,12 +46,32 @@ public static class MiniValidator
         {
             throw new ArgumentNullException(nameof(targetType));
         }
+        
 
         return typeof(IValidatableObject).IsAssignableFrom(targetType)
             || typeof(IAsyncValidatableObject).IsAssignableFrom(targetType)
             || (recurse && typeof(IEnumerable).IsAssignableFrom(targetType))
             || _typeDetailsCache.Get(targetType).Properties.Any(p => p.HasValidationAttributes || recurse)
-            || serviceProvider?.GetService(typeof(IValidate<>).MakeGenericType(targetType)) != null;
+            || HasValidatorsRegistered(targetType, serviceProvider);
+    }
+    
+    private static bool HasValidatorsRegistered(Type targetType, IServiceProvider? serviceProvider)
+    {
+        if (serviceProvider == null)
+            return false;
+        
+        var validatorType = GetValidatorType(targetType);
+        if (serviceProvider is IServiceProviderIsService serviceProviderIsService)
+        {
+            return serviceProviderIsService.IsService(validatorType);
+        }
+        
+        return serviceProvider.GetService(validatorType) != null;
+    }
+    
+    private static Type GetValidatorType(Type targetType)
+    {
+        return _validateTypesCache.GetOrAdd(targetType, t => typeof(IEnumerable<>).MakeGenericType(typeof(IValidate<>).MakeGenericType(t)));
     }
 
     /// <summary>
@@ -542,7 +562,7 @@ public static class MiniValidator
 
         if (isValid)
         {
-            var validatorType = _validateTypesCache.GetOrAdd(targetType, t => typeof(IEnumerable<>).MakeGenericType(typeof(IValidate<>).MakeGenericType(t)));
+            var validatorType = GetValidatorType(targetType);
             
             IEnumerable? validators = null;
             if (serviceProvider is IServiceProviderIsService serviceProviderIsService)
@@ -574,7 +594,7 @@ public static class MiniValidator
                         }
                         
                         // NOTE would be ideal if we could use validateMethod.CreateDelegate(typeof(ValidateAsync)) here, but type casting doesn't work
-                        return (i, context) => (Task<IEnumerable<ValidationResult>>)validateMethod.Invoke(validator, new[] { i, context });
+                        return (i, context) => (Task<IEnumerable<ValidationResult>>)validateMethod.Invoke(validator, new[] { i, context })!;
                     });
 
                     var validateTask = validateDelegate(target, validationContext);
