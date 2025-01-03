@@ -8,7 +8,7 @@ namespace MiniValidation;
 /// Provides a way to add a validator for a type outside the class.
 /// </summary>
 /// <typeparam name="T"></typeparam>
-public interface IValidatable<in T>
+public interface IValidate<in T>
 {
     /// <summary>
     /// Determines whether the specified object is valid.

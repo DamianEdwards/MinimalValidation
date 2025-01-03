@@ -401,7 +401,7 @@ public class TryValidate
     public void TryValidate_With_Validator()
     {
         var serviceCollection = new ServiceCollection();
-        serviceCollection.AddSingleton<IValidatable<TestClassLevel>, TestClassLevelValidator>();
+        serviceCollection.AddSingleton<IValidate<TestClassLevel>, TestClassLevelValidator>();
         var serviceProvider = serviceCollection.BuildServiceProvider();
 
         var thingToValidate = new TestClassLevel
@@ -419,7 +419,7 @@ public class TryValidate
     public async Task TryValidateAsync_With_Validator()
     {
         var serviceCollection = new ServiceCollection();
-        serviceCollection.AddSingleton<IValidatable<TestClassLevel>, TestClassLevelValidator>();
+        serviceCollection.AddSingleton<IValidate<TestClassLevel>, TestClassLevelValidator>();
         var serviceProvider = serviceCollection.BuildServiceProvider();
 
         var thingToValidate = new TestClassLevel
@@ -438,8 +438,8 @@ public class TryValidate
     public async Task TryValidateAsync_With_Multiple_Validators()
     {
         var serviceCollection = new ServiceCollection();
-        serviceCollection.AddSingleton<IValidatable<TestClassLevel>, TestClassLevelValidator>();
-        serviceCollection.AddSingleton<IValidatable<TestClassLevel>, ExtraTestClassLevelValidator>();
+        serviceCollection.AddSingleton<IValidate<TestClassLevel>, TestClassLevelValidator>();
+        serviceCollection.AddSingleton<IValidate<TestClassLevel>, ExtraTestClassLevelValidator>();
         var serviceProvider = serviceCollection.BuildServiceProvider();
 
         var thingToValidate = new TestClassLevel

@@ -112,7 +112,7 @@ class TestClassLevel
     public int TwentyOrMore { get; set; } = 20;
 }
 
-class TestClassLevelValidator : IValidatable<TestClassLevel>
+class TestClassLevelValidator : IValidate<TestClassLevel>
 {
     public async Task<IEnumerable<ValidationResult>> ValidateAsync(TestClassLevel instance, ValidationContext validationContext)
     {
@@ -130,7 +130,7 @@ class TestClassLevelValidator : IValidatable<TestClassLevel>
     }
 }
 
-class ExtraTestClassLevelValidator : IValidatable<TestClassLevel>
+class ExtraTestClassLevelValidator : IValidate<TestClassLevel>
 {
     public async Task<IEnumerable<ValidationResult>> ValidateAsync(TestClassLevel instance, ValidationContext validationContext)
     {
