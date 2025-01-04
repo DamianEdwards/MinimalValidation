@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -20,7 +20,7 @@ public static class MiniValidator
 {
     private static readonly TypeDetailsCache _typeDetailsCache = new();
     private static readonly ConcurrentDictionary<Type, Type> _validateTypesCache = new();
-    private static readonly ConcurrentDictionary<Type, ValidateAsync> _validateMethodCache = new();
+    private static readonly ConcurrentDictionary<Type, ValidateAsync> _validateMethodsCache = new();
     private static readonly IDictionary<string, string[]> _emptyErrors = new ReadOnlyDictionary<string, string[]>(new Dictionary<string, string[]>());
     private delegate Task<IEnumerable<ValidationResult>> ValidateAsync(object instance, ValidationContext validationContext);
 
@@ -585,7 +585,7 @@ public static class MiniValidator
                     if (!isValid || validator is null)
                         continue;
                     
-                    var validateDelegate = _validateMethodCache.GetOrAdd(validator.GetType(), t =>
+                    var validateDelegate = _validateMethodsCache.GetOrAdd(validator.GetType(), t =>
                     {
                         var validateMethod = t.GetMethod(nameof(IValidate<object>.ValidateAsync));
                         if (validateMethod is null)
