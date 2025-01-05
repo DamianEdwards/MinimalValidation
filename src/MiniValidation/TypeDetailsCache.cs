@@ -183,16 +183,18 @@ internal class TypeDetailsCache
             }
         }
 
-        var propertyAttributes = property.GetCustomAttributes();
-        var customAttributes = paramAttributes is not null
-            ? paramAttributes.Concat(propertyAttributes)
-            : propertyAttributes;
+        var customAttributes = new List<Attribute>();
 
-        if (TryGetAttributesViaTypeDescriptor(property, out var typeDescriptorAttributes))
+        var propertyAttributes = property.GetCustomAttributes();
+        customAttributes.AddRange(propertyAttributes);
+        if (paramAttributes is not null)
         {
-            customAttributes = customAttributes
-                .Concat(typeDescriptorAttributes.Cast<Attribute>())
-                .Distinct();
+            customAttributes.AddRange(paramAttributes);
+        }
+
+        if (customAttributes.Count == 0 && TryGetAttributesViaTypeDescriptor(property, out var typeDescriptorAttributes))
+        {
+            customAttributes.AddRange(typeDescriptorAttributes);
         }
 
         foreach (var attr in customAttributes)

@@ -6,6 +6,8 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddMiniValidator();
+builder.Services.AddClassMiniValidator<WidgetValidator>();
 
 var app = builder.Build();
 
@@ -23,19 +25,48 @@ app.MapGet("/widgets", () =>
 app.MapGet("/widgets/{name}", (string name) =>
     new Widget { Name = name });
 
-app.MapPost("/widgets", Results<ValidationProblem, Created<Widget>> (Widget widget) =>
-    !MiniValidator.TryValidate(widget, out var errors)
-        ? TypedResults.ValidationProblem(errors)
-        : TypedResults.Created($"/widgets/{widget.Name}", widget));
+app.MapPost("/widgets", Results<ValidationProblem, Created<Widget>> (Widget widget, IMiniValidator validator) =>
+{
+    if (!validator.TryValidate(widget, out var errors))
+    {
+        return TypedResults.ValidationProblem(errors);
+    }
 
-app.MapPost("/widgets/custom-validation", Results<ValidationProblem, Created<WidgetWithCustomValidation>> (WidgetWithCustomValidation widget) =>
-    !MiniValidator.TryValidate(widget, out var errors)
-        ? TypedResults.ValidationProblem(errors)
-        : TypedResults.Created($"/widgets/{widget.Name}", widget));
+    return TypedResults.Created($"/widgets/{widget.Name}", widget);
+});
+
+app.MapPost("/widgets/class-validator", async Task<Results<ValidationProblem, Created<WidgetWithClassValidator>>> (WidgetWithClassValidator widget, IMiniValidator<WidgetWithClassValidator> validator) =>
+{
+    var (isValid, errors) = await validator.TryValidateAsync(widget);
+    if (!isValid)
+    {
+        return TypedResults.ValidationProblem(errors);
+    }
+
+    return TypedResults.Created($"/widgets/{widget.Name}", widget);
+});
+
+app.MapPost("/widgets/custom-validation", Results<ValidationProblem, Created<WidgetWithCustomValidation>> (WidgetWithCustomValidation widget, IMiniValidator<WidgetWithCustomValidation> validator) =>
+{
+    if (!validator.TryValidate(widget, out var errors))
+    {
+        return TypedResults.ValidationProblem(errors);
+    }
+
+    return TypedResults.Created($"/widgets/{widget.Name}", widget);
+});
 
 app.Run();
 
 class Widget
+{
+    [Required, MinLength(3), Display(Name = "Widget name")]
+    public string? Name { get; set; }
+
+    public override string? ToString() => Name;
+}
+
+class WidgetWithClassValidator : Widget
 {
     [Required, MinLength(3), Display(Name = "Widget name")]
     public string? Name { get; set; }
@@ -49,7 +80,20 @@ class WidgetWithCustomValidation : Widget, IValidatableObject
     {
         if (string.Equals(Name, "Widget", StringComparison.OrdinalIgnoreCase))
         {
-            yield return new($"Cannot name a widget '{Name}'.", new[] { nameof(Name) });
+            yield return new($"Cannot name a widget '{Name}'.", [nameof(Name)]);
         }
+    }
+}
+
+class WidgetValidator : IValidate<WidgetWithClassValidator>
+{
+    public IEnumerable<ValidationResult> Validate(WidgetWithClassValidator instance, ValidationContext validationContext)
+    {
+        if (string.Equals(instance.Name, "Widget", StringComparison.OrdinalIgnoreCase))
+        {
+            return [new($"Cannot name a widget '{instance.Name}'.", [nameof(instance.Name)])];
+        }
+
+        return [];
     }
 }

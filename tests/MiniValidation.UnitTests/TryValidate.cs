@@ -361,12 +361,15 @@ public class TryValidate
     public void TryValidate_With_ServiceProvider()
     {
         var serviceCollection = new ServiceCollection();
+        serviceCollection.AddMiniValidator();
         serviceCollection.AddSingleton<TestService>();
         var serviceProvider = serviceCollection.BuildServiceProvider();
 
         var thingToValidate = new TestClassLevelValidatableOnlyTypeWithServiceProvider();
 
-        var result = MiniValidator.TryValidate(thingToValidate, serviceProvider, out var errors);
+        var validator = serviceProvider.GetRequiredService<IMiniValidator>();
+
+        var result = validator.TryValidate(thingToValidate, out var errors);
         Assert.True(result);
 
         errors.Clear();
@@ -377,15 +380,40 @@ public class TryValidate
     }
 
     [Fact]
-    public async Task TryValidateAsync_With_ServiceProvider()
+    public void TryValidate_With_ServiceProvider_TypedValidator()
     {
         var serviceCollection = new ServiceCollection();
+        serviceCollection.AddMiniValidator();
         serviceCollection.AddSingleton<TestService>();
         var serviceProvider = serviceCollection.BuildServiceProvider();
 
         var thingToValidate = new TestClassLevelValidatableOnlyTypeWithServiceProvider();
 
-        var (isValid, errors) = await MiniValidator.TryValidateAsync(thingToValidate, serviceProvider);
+        var validator = serviceProvider.GetRequiredService<IMiniValidator<TestClassLevelValidatableOnlyTypeWithServiceProvider>>();
+
+        var result = validator.TryValidate(thingToValidate, out var errors);
+        Assert.True(result);
+
+        errors.Clear();
+        result = MiniValidator.TryValidate(thingToValidate, out errors);
+        Assert.False(result);
+        Assert.Single(errors);
+        Assert.Equal(nameof(IServiceProvider), errors.Keys.First());
+    }
+    
+    [Fact]
+    public async Task TryValidateAsync_With_ServiceProvider()
+    {
+        var serviceCollection = new ServiceCollection();
+        serviceCollection.AddMiniValidator();
+        serviceCollection.AddSingleton<TestService>();
+        var serviceProvider = serviceCollection.BuildServiceProvider();
+
+        var thingToValidate = new TestClassLevelValidatableOnlyTypeWithServiceProvider();
+        
+        var validator = serviceProvider.GetRequiredService<IMiniValidator>();
+
+        var (isValid, errors) = await validator.TryValidateAsync(thingToValidate);
 
         Assert.True(isValid);
         Assert.Empty(errors);
@@ -401,33 +429,124 @@ public class TryValidate
     public void TryValidate_With_Validator()
     {
         var serviceCollection = new ServiceCollection();
-        serviceCollection.AddSingleton<IValidate<TestClassLevel>, TestClassLevelValidator>();
+        serviceCollection.AddMiniValidator();
+        serviceCollection.AddClassMiniValidator<TestClassLevelAsyncValidator>();
         var serviceProvider = serviceCollection.BuildServiceProvider();
+        var validator = serviceProvider.GetRequiredService<IMiniValidator>();
 
         var thingToValidate = new TestClassLevel
         {
             TwentyOrMore = 12
         };
+        
+        var result = validator.TryValidate(thingToValidate, true, true, out var errors);
 
-        Assert.Throws<InvalidOperationException>(() =>
-        {
-            var isValid = MiniValidator.TryValidate(thingToValidate, serviceProvider, out var errors);
-        });
+        Assert.False(result);
+        Assert.Single(errors);
+        Assert.Equal(nameof(TestValidatableType.TwentyOrMore), errors.Keys.First());
     }
 
+    [Fact]
+    public void TryValidate_With_Validator_And_TypedValidator()
+    {
+        var serviceCollection = new ServiceCollection();
+        serviceCollection.AddMiniValidator();
+        serviceCollection.AddClassMiniValidator<TestClassLevelAsyncValidator>();
+        var serviceProvider = serviceCollection.BuildServiceProvider();
+        var validator = serviceProvider.GetRequiredService<IMiniValidator<TestClassLevel>>();
+
+        var thingToValidate = new TestClassLevel
+        {
+            TwentyOrMore = 12
+        };
+        
+        var result = validator.TryValidate(thingToValidate, true, true, out var errors);
+
+        Assert.False(result);
+        Assert.Single(errors);
+        Assert.Equal(nameof(TestValidatableType.TwentyOrMore), errors.Keys.First());
+    }
+
+    [Fact]
+    public void TryValidate_With_Validator_And_TypedValidator_In_Scope()
+    {
+        var serviceCollection = new ServiceCollection();
+        serviceCollection.AddMiniValidator();
+        serviceCollection.AddClassMiniValidator<TestClassLevelAsyncValidator>();
+        var serviceProvider = serviceCollection.BuildServiceProvider();
+        using var scope = serviceProvider.CreateScope();
+        var validator = scope.ServiceProvider.GetRequiredService<IMiniValidator<TestClassLevel>>();
+
+        var thingToValidate = new TestClassLevel
+        {
+            TwentyOrMore = 12
+        };
+        
+        var result = validator.TryValidate(thingToValidate, true, true, out var errors);
+
+        Assert.False(result);
+        Assert.Single(errors);
+        Assert.Equal(nameof(TestValidatableType.TwentyOrMore), errors.Keys.First());
+    }
+    
     [Fact]
     public async Task TryValidateAsync_With_Validator()
     {
         var serviceCollection = new ServiceCollection();
-        serviceCollection.AddSingleton<IValidate<TestClassLevel>, TestClassLevelValidator>();
+        serviceCollection.AddMiniValidator();
+        serviceCollection.AddClassMiniValidator<TestClassLevelAsyncValidator>();
         var serviceProvider = serviceCollection.BuildServiceProvider();
+        var validator = serviceProvider.GetRequiredService<IMiniValidator>();
 
         var thingToValidate = new TestClassLevel
         {
             TwentyOrMore = 12
         };
 
-        var (isValid, errors) = await MiniValidator.TryValidateAsync(thingToValidate, serviceProvider);
+        var (isValid, errors) = await validator.TryValidateAsync(thingToValidate);
+
+        Assert.False(isValid);
+        Assert.Single(errors);
+        Assert.Equal(nameof(TestValidatableType.TwentyOrMore), errors.Keys.First());
+    }
+
+    [Fact]
+    public async Task TryValidateAsync_With_Validator_And_TypedValidator()
+    {
+        var serviceCollection = new ServiceCollection();
+        serviceCollection.AddMiniValidator();
+        serviceCollection.AddClassMiniValidator<TestClassLevelAsyncValidator>();
+        var serviceProvider = serviceCollection.BuildServiceProvider();
+        var validator = serviceProvider.GetRequiredService<IMiniValidator<TestClassLevel>>();
+
+        var thingToValidate = new TestClassLevel
+        {
+            TwentyOrMore = 12
+        };
+
+        var (isValid, errors) = await validator.TryValidateAsync(thingToValidate);
+
+        Assert.False(isValid);
+        Assert.Single(errors);
+        Assert.Equal(nameof(TestValidatableType.TwentyOrMore), errors.Keys.First());
+    }
+
+    [Fact]
+    public async Task TryValidateAsync_With_Validator_And_TypedValidator_In_Scope()
+    {
+        var serviceCollection = new ServiceCollection();
+        serviceCollection.AddMiniValidator();
+        serviceCollection.AddClassMiniValidator<TestClassLevelAsyncValidator>();
+        var serviceProvider = serviceCollection.BuildServiceProvider();
+        await using var scope = serviceProvider.CreateAsyncScope();
+        var validator = scope.ServiceProvider.GetRequiredService<IMiniValidator<TestClassLevel>>();
+
+        var thingToValidate = new TestClassLevel
+        {
+            TwentyOrMore = 12
+        };
+
+        var (isValid, errors) = await validator.TryValidateAsync(thingToValidate);
 
         Assert.False(isValid);
         Assert.Single(errors);
@@ -438,16 +557,40 @@ public class TryValidate
     public async Task TryValidateAsync_With_Multiple_Validators()
     {
         var serviceCollection = new ServiceCollection();
-        serviceCollection.AddSingleton<IValidate<TestClassLevel>, TestClassLevelValidator>();
-        serviceCollection.AddSingleton<IValidate<TestClassLevel>, ExtraTestClassLevelValidator>();
+        serviceCollection.AddMiniValidator();
+        serviceCollection.AddClassMiniValidator<TestClassLevelValidator>();
+        serviceCollection.AddClassMiniValidator<ExtraTestClassLevelValidator>();
         var serviceProvider = serviceCollection.BuildServiceProvider();
+        var validator = serviceProvider.GetRequiredService<IMiniValidator>();
 
         var thingToValidate = new TestClassLevel
         {
             TwentyOrMore = 22
         };
 
-        var (isValid, errors) = await MiniValidator.TryValidateAsync(thingToValidate, serviceProvider);
+        var (isValid, errors) = await validator.TryValidateAsync(thingToValidate);
+
+        Assert.False(isValid);
+        Assert.Single(errors);
+        Assert.Equal(nameof(TestValidatableType.TwentyOrMore), errors.Keys.First());
+    }
+
+    [Fact]
+    public async Task TryValidateAsync_With_Multiple_AsyncValidators()
+    {
+        var serviceCollection = new ServiceCollection();
+        serviceCollection.AddMiniValidator();
+        serviceCollection.AddClassMiniValidator<TestClassLevelAsyncValidator>();
+        serviceCollection.AddClassMiniValidator<ExtraTestClassLevelValidator>();
+        var serviceProvider = serviceCollection.BuildServiceProvider();
+        var validator = serviceProvider.GetRequiredService<IMiniValidator>();
+
+        var thingToValidate = new TestClassLevel
+        {
+            TwentyOrMore = 22
+        };
+
+        var (isValid, errors) = await validator.TryValidateAsync(thingToValidate);
 
         Assert.False(isValid);
         Assert.Single(errors);
@@ -458,8 +601,10 @@ public class TryValidate
     public void TryValidate_Enumerable_With_ServiceProvider()
     {
         var serviceCollection = new ServiceCollection();
+        serviceCollection.AddMiniValidator();
         serviceCollection.AddSingleton<TestService>();
         var serviceProvider = serviceCollection.BuildServiceProvider();
+        var validator = serviceProvider.GetRequiredService<IMiniValidator>();
 
         var thingToValidate = new TestClassWithEnumerable<TestClassLevelValidatableOnlyTypeWithServiceProvider>
         {
@@ -469,7 +614,7 @@ public class TryValidate
             }
         };
 
-        var result = MiniValidator.TryValidate(thingToValidate, serviceProvider, out var errors);
+        var result = validator.TryValidate(thingToValidate, out var errors);
         Assert.True(result);
 
         errors.Clear();
@@ -483,8 +628,10 @@ public class TryValidate
     public async Task TryValidateAsync_Enumerable_With_ServiceProvider()
     {
         var serviceCollection = new ServiceCollection();
+        serviceCollection.AddMiniValidator();
         serviceCollection.AddSingleton<TestService>();
         var serviceProvider = serviceCollection.BuildServiceProvider();
+        var validator = serviceProvider.GetRequiredService<IMiniValidator>();
 
         var thingToValidate = new TestClassWithEnumerable<TestClassLevelValidatableOnlyTypeWithServiceProvider>
         {
@@ -494,7 +641,7 @@ public class TryValidate
             }
         };
 
-        var (isValid, errors) = await MiniValidator.TryValidateAsync(thingToValidate, serviceProvider);
+        var (isValid, errors) = await validator.TryValidateAsync(thingToValidate);
         Assert.True(isValid);
 
         errors.Clear();

@@ -20,9 +20,17 @@ public static class MiniValidator
 {
     private static readonly TypeDetailsCache _typeDetailsCache = new();
     private static readonly ConcurrentDictionary<Type, Type> _validateTypesCache = new();
-    private static readonly ConcurrentDictionary<Type, ValidateAsync> _validateMethodsCache = new();
+    private static readonly ConcurrentDictionary<Type, Type> _asyncValidateTypesCache = new();
+    private static readonly ConcurrentDictionary<Type, Validate> _validateMethodsCache = new();
+    private static readonly ConcurrentDictionary<Type, ValidateAsync> _asyncValidateMethodsCache = new();
     private static readonly IDictionary<string, string[]> _emptyErrors = new ReadOnlyDictionary<string, string[]>(new Dictionary<string, string[]>());
+
+    private delegate IEnumerable<ValidationResult> Validate(object instance, ValidationContext validationContext);
+#if NET6_0_OR_GREATER
+    private delegate ValueTask<IEnumerable<ValidationResult>> ValidateAsync(object instance, ValidationContext validationContext);
+#else
     private delegate Task<IEnumerable<ValidationResult>> ValidateAsync(object instance, ValidationContext validationContext);
+#endif
 
     /// <summary>
     /// Gets or sets the maximum depth allowed when validating an object with recursion enabled.
@@ -48,7 +56,6 @@ public static class MiniValidator
             throw new ArgumentNullException(nameof(targetType));
         }
         
-
         return typeof(IValidatableObject).IsAssignableFrom(targetType)
             || typeof(IAsyncValidatableObject).IsAssignableFrom(targetType)
             || (recurse && typeof(IEnumerable).IsAssignableFrom(targetType))
@@ -62,17 +69,24 @@ public static class MiniValidator
             return false;
         
         var validatorType = GetValidatorType(targetType);
-        if (serviceProvider is IServiceProviderIsService serviceProviderIsService)
+        var asyncValidatorType = GetAsyncValidatorType(targetType);
+        var serviceProviderIsService = serviceProvider.GetService<IServiceProviderIsService>();
+        if (serviceProviderIsService != null)
         {
-            return serviceProviderIsService.IsService(validatorType);
+            return serviceProviderIsService.IsService(validatorType) || serviceProviderIsService.IsService(asyncValidatorType);
         }
         
-        return serviceProvider.GetService(validatorType) != null;
+        return serviceProvider.GetService(validatorType) != null || serviceProvider.GetService(asyncValidatorType) != null;
     }
     
     private static Type GetValidatorType(Type targetType)
     {
         return _validateTypesCache.GetOrAdd(targetType, t => typeof(IEnumerable<>).MakeGenericType(typeof(IValidate<>).MakeGenericType(t)));
+    }
+    
+    private static Type GetAsyncValidatorType(Type targetType)
+    {
+        return _asyncValidateTypesCache.GetOrAdd(targetType, t => typeof(IEnumerable<>).MakeGenericType(typeof(IAsyncValidate<>).MakeGenericType(t)));
     }
 
     /// <summary>
@@ -443,7 +457,7 @@ public static class MiniValidator
                 (property.Recurse
                  || typeof(IValidatableObject).IsAssignableFrom(propertyValueType)
                  || typeof(IAsyncValidatableObject).IsAssignableFrom(propertyValueType)
-                 || serviceProvider?.GetService(typeof(IValidate<>).MakeGenericType(propertyValueType!)) != null
+                 || serviceProvider?.GetService(typeof(IAsyncValidate<>).MakeGenericType(propertyValueType!)) != null
                  || properties.Any(p => p.Recurse)))
             {
                 propertiesToRecurse!.Add(property, propertyValue);
@@ -535,11 +549,8 @@ public static class MiniValidator
             validationContext.DisplayName = validationContext.ObjectType.Name;
 
             var validatableResults = validatable.Validate(validationContext);
-            if (validatableResults is not null)
-            {
-                ProcessValidationResults(validatableResults, workingErrors, prefix);
-                isValid = workingErrors.Count == 0 && isValid;
-            }
+            ProcessValidationResults(validatableResults, workingErrors, prefix);
+            isValid = workingErrors.Count == 0 && isValid;
         }
 
         if (isValid && typeof(IAsyncValidatableObject).IsAssignableFrom(targetType))
@@ -554,8 +565,58 @@ public static class MiniValidator
             ThrowIfAsyncNotAllowed(validateTask.IsCompleted, allowAsync);
 
             var validatableResults = await validateTask.ConfigureAwait(false);
-            if (validatableResults is not null)
+            ProcessValidationResults(validatableResults, workingErrors, prefix);
+            isValid = workingErrors.Count == 0 && isValid;
+        }
+
+        if (isValid)
+        {
+            var validatorType = GetValidatorType(targetType);
+            
+            var validators = new List<object>();
+            var serviceProviderIsService = serviceProvider?.GetService<IServiceProviderIsService>();
+            if (serviceProviderIsService != null)
             {
+                if (serviceProviderIsService.IsService(validatorType))
+                {
+                    validators.AddRange(((IEnumerable)serviceProvider!.GetService(validatorType)!).Cast<object?>()!);
+                }
+            }
+            else if (serviceProvider is not null)
+            {
+                var validatorServices = serviceProvider.GetService(validatorType) as IEnumerable;
+                validators.AddRange(validatorServices?.Cast<object>() ?? Array.Empty<object>());
+            }
+            
+            foreach (var validator in validators)
+            {
+                if (!isValid)
+                    continue;
+                
+                var validateDelegate = _validateMethodsCache.GetOrAdd(validator.GetType(), t =>
+                {
+                    var validateMethod = t.GetMethod(nameof(IValidate<object>.Validate));
+                    if (validateMethod is null)
+                    {
+                        throw new InvalidOperationException(
+                            $"The type {validators.GetType().Name} does not implement the required method 'Validate'.");
+                    }
+                    
+                    var parameters = validateMethod.GetParameters();
+                    var targetArg = Expression.Parameter(typeof(object), "target");
+                    var contextArg = Expression.Parameter(typeof(ValidationContext), "context");
+                    var callExp = Expression.Call(Expression.Constant(validator), validateMethod, Expression.Convert(targetArg, parameters.First().ParameterType), contextArg);
+                    var handler = Expression.Lambda<Validate>(callExp, targetArg, contextArg).Compile();
+                    
+                    return handler;
+                });
+
+                var validatableResults = validateDelegate(target, validationContext);
+
+                // Reset validation context
+                validationContext.MemberName = null;
+                validationContext.DisplayName = validationContext.ObjectType.Name;
+
                 ProcessValidationResults(validatableResults, workingErrors, prefix);
                 isValid = workingErrors.Count == 0 && isValid;
             }
@@ -563,66 +624,57 @@ public static class MiniValidator
 
         if (isValid)
         {
-            var validatorType = GetValidatorType(targetType);
+            var validatorType = GetAsyncValidatorType(targetType);
             
-            IEnumerable? validators = null;
-            if (serviceProvider is IServiceProviderIsService serviceProviderIsService)
+            var validators = new List<object?>();
+            var serviceProviderIsService = serviceProvider?.GetService<IServiceProviderIsService>();
+            if (serviceProviderIsService != null)
             {
                 if (serviceProviderIsService.IsService(validatorType))
                 {
-                    validators = (IEnumerable?)serviceProvider.GetService(validatorType);
+                    validators.AddRange(((IEnumerable)serviceProvider!.GetService(validatorType)!).Cast<object?>()!);
                 }
             }
             else if (serviceProvider is not null)
             {
-                validators = (IEnumerable?)serviceProvider.GetService(validatorType);
+                var validatorServices = serviceProvider.GetService(validatorType) as IEnumerable;
+                validators.AddRange(validatorServices?.Cast<object>() ?? Array.Empty<object>());
             }
             
-            if (validators != null)
+            foreach (var validator in validators)
             {
-                foreach (var validator in validators)
+                if (!isValid || validator is null)
+                    continue;
+                
+                var validateDelegate = _asyncValidateMethodsCache.GetOrAdd(validator.GetType(), t =>
                 {
-                    if (!isValid || validator is null)
-                        continue;
-                    
-                    var validateDelegate = _validateMethodsCache.GetOrAdd(validator.GetType(), t =>
-                    {
-                        var validateMethod = t.GetMethod(nameof(IValidate<object>.ValidateAsync));
-                        if (validateMethod is null)
-                        {
-                            throw new InvalidOperationException(
-                                $"The type {validators.GetType().Name} does not implement the required method 'Task<IEnumerable<ValidationResult>> ValidateAsync(object, ValidationContext)'.");
-                        }
-                        
-                        var parameters = validateMethod.GetParameters();
-                        var targetArg = Expression.Parameter(typeof(object), "target");
-                        var contextArg = Expression.Parameter(typeof(ValidationContext), "context");
-                        var callExp = Expression.Call(Expression.Constant(validator), validateMethod, Expression.Convert(targetArg, parameters.First().ParameterType), contextArg);
-                        var handler = Expression.Lambda<ValidateAsync>(callExp, targetArg, contextArg).Compile();
-                        
-                        return handler;
-                    });
-
-                    var validateTask = validateDelegate(target, validationContext);
-                    if (validateTask is null)
+                    var validateMethod = t.GetMethod(nameof(IAsyncValidate<object>.ValidateAsync));
+                    if (validateMethod is null)
                     {
                         throw new InvalidOperationException(
-                            $"The type {validators.GetType().Name} does not implement the required method 'Task<IEnumerable<ValidationResult>> ValidateAsync(object, ValidationContext)'.");
+                            $"The type {validators.GetType().Name} does not implement the required method 'ValidateAsync'.");
                     }
+                    
+                    var parameters = validateMethod.GetParameters();
+                    var targetArg = Expression.Parameter(typeof(object), "target");
+                    var contextArg = Expression.Parameter(typeof(ValidationContext), "context");
+                    var callExp = Expression.Call(Expression.Constant(validator), validateMethod, Expression.Convert(targetArg, parameters.First().ParameterType), contextArg);
+                    var handler = Expression.Lambda<ValidateAsync>(callExp, targetArg, contextArg).Compile();
+                    
+                    return handler;
+                });
 
-                    // Reset validation context
-                    validationContext.MemberName = null;
-                    validationContext.DisplayName = validationContext.ObjectType.Name;
+                var validateTask = validateDelegate(target, validationContext);
 
-                    ThrowIfAsyncNotAllowed(validateTask.IsCompleted, allowAsync);
+                // Reset validation context
+                validationContext.MemberName = null;
+                validationContext.DisplayName = validationContext.ObjectType.Name;
 
-                    var validatableResults = await validateTask.ConfigureAwait(false);
-                    if (validatableResults is not null)
-                    {
-                        ProcessValidationResults(validatableResults, workingErrors, prefix);
-                        isValid = workingErrors.Count == 0 && isValid;
-                    }
-                }
+                ThrowIfAsyncNotAllowed(validateTask.IsCompleted, allowAsync);
+
+                var validatableResults = await validateTask.ConfigureAwait(false);
+                ProcessValidationResults(validatableResults, workingErrors, prefix);
+                isValid = workingErrors.Count == 0 && isValid;
             }
         }
 
@@ -720,9 +772,14 @@ public static class MiniValidator
 
         return result;
     }
-
-    private static void ProcessValidationResults(IEnumerable<ValidationResult> validationResults, Dictionary<string, List<string>> errors, string? prefix)
+    
+    private static void ProcessValidationResults(IEnumerable<ValidationResult>? validationResults, Dictionary<string, List<string>> errors, string? prefix)
     {
+        if (validationResults is null)
+        {
+            return;
+        }
+        
         foreach (var result in validationResults)
         {
             var hasMemberNames = false;

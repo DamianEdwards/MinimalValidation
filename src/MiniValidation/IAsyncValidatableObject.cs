@@ -14,5 +14,9 @@ public interface IAsyncValidatableObject
     /// </summary>
     /// <param name="validationContext">The validation context.</param>
     /// <returns>A collection that holds failed-validation information.</returns>
+#if NET6_0_OR_GREATER
+    ValueTask<IEnumerable<ValidationResult>> ValidateAsync(ValidationContext validationContext);
+#else
     Task<IEnumerable<ValidationResult>> ValidateAsync(ValidationContext validationContext);
+#endif
 }

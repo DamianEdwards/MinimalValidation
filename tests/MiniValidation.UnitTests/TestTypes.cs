@@ -91,7 +91,12 @@ class TestClassLevelAsyncValidatableOnlyType : IAsyncValidatableObject
 {
     public int TwentyOrMore { get; set; } = 20;
 
+#if NET6_0_OR_GREATER
+
+    public async ValueTask<IEnumerable<ValidationResult>> ValidateAsync(ValidationContext validationContext)
+#else
     public async Task<IEnumerable<ValidationResult>> ValidateAsync(ValidationContext validationContext)
+#endif
     {
         await Task.Yield();
 
@@ -114,7 +119,27 @@ class TestClassLevel
 
 class TestClassLevelValidator : IValidate<TestClassLevel>
 {
+    public IEnumerable<ValidationResult> Validate(TestClassLevel instance, ValidationContext validationContext)
+    {
+        List<ValidationResult>? errors = null;
+
+        if (instance.TwentyOrMore < 20)
+        {
+            errors ??= new List<ValidationResult>();
+            errors.Add(new ValidationResult($"The field {validationContext.DisplayName} must have a value greater than 20.", new[] { nameof(TestClassLevel.TwentyOrMore) }));
+        }
+
+        return errors ?? Enumerable.Empty<ValidationResult>();
+    }
+}
+
+class TestClassLevelAsyncValidator : IAsyncValidate<TestClassLevel>
+{
+#if NET6_0_OR_GREATER
+    public async ValueTask<IEnumerable<ValidationResult>> ValidateAsync(TestClassLevel instance, ValidationContext validationContext)
+#else
     public async Task<IEnumerable<ValidationResult>> ValidateAsync(TestClassLevel instance, ValidationContext validationContext)
+#endif
     {
         await Task.Yield();
 
@@ -132,10 +157,8 @@ class TestClassLevelValidator : IValidate<TestClassLevel>
 
 class ExtraTestClassLevelValidator : IValidate<TestClassLevel>
 {
-    public async Task<IEnumerable<ValidationResult>> ValidateAsync(TestClassLevel instance, ValidationContext validationContext)
+    public IEnumerable<ValidationResult> Validate(TestClassLevel instance, ValidationContext validationContext)
     {
-        await Task.Yield();
-
         List<ValidationResult>? errors = null;
 
         if (instance.TwentyOrMore > 20)
@@ -150,7 +173,11 @@ class ExtraTestClassLevelValidator : IValidate<TestClassLevel>
 
 class TestClassLevelAsyncValidatableOnlyTypeWithServiceProvider : IAsyncValidatableObject
 {
+#if NET6_0_OR_GREATER
+    public async ValueTask<IEnumerable<ValidationResult>> ValidateAsync(ValidationContext validationContext)
+#else
     public async Task<IEnumerable<ValidationResult>> ValidateAsync(ValidationContext validationContext)
+#endif
     {
         await Task.Yield();
 
@@ -223,7 +250,11 @@ class TestAsyncValidatableChildType : TestChildType, IAsyncValidatableObject
 {
     public int TwentyOrMore { get; set; } = 20;
 
+#if NET6_0_OR_GREATER
+    public async ValueTask<IEnumerable<ValidationResult>> ValidateAsync(ValidationContext validationContext)
+#else
     public async Task<IEnumerable<ValidationResult>> ValidateAsync(ValidationContext validationContext)
+#endif
     {
         var taskToAwait = validationContext.GetService<Task>();
         if (taskToAwait is not null)
