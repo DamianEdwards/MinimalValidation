@@ -2,6 +2,7 @@
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Jobs;
 using BenchmarkDotNet.Running;
+using Microsoft.Extensions.DependencyInjection;
 using MiniValidation;
 
 BenchmarkRunner.Run<Benchmarks>();
@@ -9,10 +10,15 @@ BenchmarkRunner.Run<Benchmarks>();
 #pragma warning disable CA1050 // Declare types in namespaces
 //[SimpleJob(RuntimeMoniker.Net472)]
 //[SimpleJob(RuntimeMoniker.Net60)]
-[SimpleJob(RuntimeMoniker.Net70, baseline: true)]
+[SimpleJob(RuntimeMoniker.Net80, baseline: true)]
 [MemoryDiagnoser]
 public class Benchmarks
 {
+    private IServiceProvider _serviceProvider = null!;
+    private IServiceProvider _serviceProviderWithValidator = null!;
+    private IMiniValidator _validator = null!;
+    private IMiniValidator _validatorWithClassValidator = null!;
+    
     [GlobalSetup]
 #pragma warning disable CA1822 // Mark members as static
     public void Initialize()
@@ -24,6 +30,11 @@ public class Benchmarks
             var target = Activator.CreateInstance(type);
             MiniValidator.TryValidate(target, recurse: true, allowAsync: false, out var _);
         }
+
+        _serviceProvider = new ServiceCollection().AddMiniValidator().BuildServiceProvider();
+        _validator = _serviceProvider.GetRequiredService<IMiniValidator>();
+        _serviceProviderWithValidator = new ServiceCollection().AddMiniValidator().AddClassMiniValidator<TodoValidator>().BuildServiceProvider();
+        _validatorWithClassValidator = _serviceProviderWithValidator.GetRequiredService<IMiniValidator>();
     }
 
     [Benchmark(Baseline = true)]
@@ -35,10 +46,34 @@ public class Benchmarks
     }
 
     [Benchmark]
+    public async ValueTask<(bool, IDictionary<string, string[]>)> NothingToValidate_ServiceProvider()
+    {
+        var target = new BenchmarkTypes.TodoWithNoValidation();
+        var (isValid, errors) = await _validator.TryValidateAsync(target);
+        return (isValid, errors);
+    }
+
+    [Benchmark]
     public (bool, IDictionary<string, string[]>) SinglePropertyToValidate_NoRecursion_Valid()
     {
         var target = new BenchmarkTypes.Todo { Title = "This is the title" };
         var isValid = MiniValidator.TryValidate(target, recurse: false, allowAsync: false, out var errors);
+        return (isValid, errors);
+    }
+
+    [Benchmark]
+    public async ValueTask<(bool, IDictionary<string, string[]>)> SinglePropertyToValidate_ServiceProvider_NoRecursion_Valid()
+    {
+        var target = new BenchmarkTypes.Todo { Title = "This is the title" };
+        var (isValid, errors) = await _validator.TryValidateAsync(target, false);
+        return (isValid, errors);
+    }
+
+    [Benchmark]
+    public async ValueTask<(bool, IDictionary<string, string[]>)> SinglePropertyToValidate_ClassValidator_ServiceProvider_NoRecursion_Valid()
+    {
+        var target = new BenchmarkTypes.Todo { Title = "This is the title" };
+        var (isValid, errors) = await _validatorWithClassValidator.TryValidateAsync(target, false);
         return (isValid, errors);
     }
 
@@ -68,6 +103,21 @@ public class Benchmarks
         return (isValid, errors);
     }
 #pragma warning restore CA1822 // Mark members as static
+}
+
+public class TodoValidator : IAsyncValidate<BenchmarkTypes.Todo>
+{
+#if NET6_0_OR_GREATER
+    public ValueTask<IEnumerable<ValidationResult>> ValidateAsync(BenchmarkTypes.Todo instance, ValidationContext validationContext)
+    {
+        return new ValueTask<IEnumerable<ValidationResult>>(Array.Empty<ValidationResult>());
+    }
+#else
+    public Task<IEnumerable<ValidationResult>> ValidateAsync(BenchmarkTypes.Todo instance, ValidationContext validationContext)
+    {
+        return Task.FromResult<IEnumerable<ValidationResult>>(Array.Empty<ValidationResult>());
+    }
+#endif
 }
 
 public class BenchmarkTypes

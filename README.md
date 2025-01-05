@@ -41,8 +41,11 @@ class Widget
 var widget = new Widget { Name = "" };
 
 // Get your serviceProvider from wherever makes sense
-var serviceProvider = ...
-var isValid = MiniValidator.TryValidate(widget, serviceProvider, out var errors);
+var services = new ServicesCollection();
+services.AddMiniValidation();
+var serviceProvider = services.CreateServiceProvider();
+var validator = serviceProvider.GetRequiredService<IMiniValidator>();
+var isValid = validator.TryValidate(widget, out var errors);
 
 class Widget : IValidatableObject
 {
